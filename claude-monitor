@@ -1,0 +1,61 @@
+#!/bin/bash
+# claude-monitor — start/stop the floating Claude usage widget.
+# Usage: claude-monitor start | stop | restart | status | log
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC="$SCRIPT_DIR/ClaudeMonitor.swift"
+APPDIR="$HOME/.claude-monitor"
+BIN="$APPDIR/ClaudeMonitor"
+PIDFILE="$APPDIR/monitor.pid"
+LOGFILE="$APPDIR/monitor.log"
+
+mkdir -p "$APPDIR"
+
+running_pid() {
+    [ -f "$PIDFILE" ] || return 1
+    local pid
+    pid=$(cat "$PIDFILE")
+    kill -0 "$pid" 2>/dev/null || return 1
+    echo "$pid"
+}
+
+build_if_needed() {
+    if [ ! -x "$BIN" ] || [ "$SRC" -nt "$BIN" ]; then
+        echo "Building widget…"
+        swiftc -O -o "$BIN" "$SRC"
+    fi
+}
+
+start() {
+    if pid=$(running_pid); then
+        echo "Already running (pid $pid)."
+        exit 0
+    fi
+    build_if_needed
+    nohup "$BIN" >>"$LOGFILE" 2>&1 &
+    echo $! > "$PIDFILE"
+    disown
+    echo "Claude usage widget started (pid $(cat "$PIDFILE")). Drag it anywhere; right-click for options."
+}
+
+stop() {
+    if pid=$(running_pid); then
+        kill "$pid"
+        rm -f "$PIDFILE"
+        echo "Stopped."
+    else
+        rm -f "$PIDFILE"
+        echo "Not running."
+    fi
+}
+
+case "${1:-start}" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; start ;;
+    status)  if pid=$(running_pid); then echo "Running (pid $pid)."; else echo "Not running."; fi ;;
+    log)     tail -n 40 "$LOGFILE" 2>/dev/null || echo "No log yet." ;;
+    *)       echo "Usage: claude-monitor start|stop|restart|status|log"; exit 1 ;;
+esac
